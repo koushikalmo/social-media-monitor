@@ -1,0 +1,25 @@
+{
+  "name": "openclaw-youtube-snapshot",
+  "version": "0.2.0",
+  "type": "module",
+  "description": "OpenClaw plugin: on-demand snapshot of a YouTube channel via pure HTML scraping. Returns subscriber count, recent video titles, view/like/comment counts. No API key.",
+  "openclaw": {
+    "extensions": ["./dist/index.js"],
+    "compat": {
+      "pluginApi": ">=2026.3.24-beta.2",
+      "minGatewayVersion": "2026.3.24-beta.2"
+    }
+  },
+  "scripts": {
+    "build": "tsc",
+    "dev": "tsc --watch",
+    "snapshot": "node dist/cli.js"
+  },
+  "dependencies": {
+    "@sinclair/typebox": "^0.32.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "typescript": "^5.4.0"
+  }
+}

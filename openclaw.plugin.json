@@ -1,0 +1,9 @@
+{
+  "id": "youtube-snapshot",
+  "name": "YouTube Snapshot",
+  "description": "Scrapes a YouTube channel's public pages and reports the current subscriber count plus recent videos' titles, view counts, like counts, and comment counts. Pure HTML scraping — no API key, no scheduled polling.",
+  "configSchema": {
+    "type": "object",
+    "additionalProperties": false
+  }
+}

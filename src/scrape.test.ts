@@ -392,6 +392,63 @@ console.log("\n--- T7: empty channel page (no videos) ---");
   }
 }
 
+// --- T8b: current 2026 buttonViewModel shape (iconName:LIKE) ---
+
+console.log("\n--- T8b: 2026 buttonViewModel iconName:LIKE shape parses ---");
+{
+  function makeVideoHtmlButtonViewModel(opts: {
+    title: string;
+    likes: number;
+    comments: number;
+  }): string {
+    const data = {
+      contents: {
+        twoColumnWatchNextResults: {
+          results: {
+            results: {
+              contents: [
+                {
+                  videoPrimaryInfoRenderer: {
+                    title: { runs: [{ text: opts.title }] },
+                    viewCount: {
+                      videoViewCountRenderer: {
+                        viewCount: { simpleText: "100 views" },
+                      },
+                    },
+                  },
+                },
+              ],
+            },
+          },
+        },
+      },
+    };
+    const padding = "<!-- " + "x".repeat(6000) + " -->";
+    return `<!DOCTYPE html><html><head>
+<script>var ytInitialData = ${JSON.stringify(data)};</script>
+${padding}
+</head><body>
+"buttonViewModel":{"iconName":"LIKE","title":"${opts.likes}"}
+"commentCount":{"simpleText":"${opts.comments}"}
+</body></html>`;
+  }
+  const restore = installMockFetch((url) => {
+    if (isVideoUrl(url)) {
+      return {
+        status: 200,
+        body: makeVideoHtmlButtonViewModel({ title: "v", likes: 15, comments: 4 }),
+      };
+    }
+    return { status: 200, body: CHANNEL_FIXTURE };
+  });
+  try {
+    const snap = await scrapeChannel("UCTESTCHANNEL1234567890", 1);
+    eq(snap.videos[0].likeCount, 15, "T8b: buttonViewModel iconName:LIKE → likes=15");
+  } finally {
+    restore();
+  }
+}
+
 // --- T9: newer markup shapes — factoid likes, dedicated commentsCount ---
 
 console.log("\n--- T9: newer markup shapes still parse ---");

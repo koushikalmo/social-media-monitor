@@ -286,6 +286,7 @@ async function scrapeVideoPage(
   likeCount: number | null;
   likeCountText: string;
   commentCount: number | null;
+  commentsDisabled: boolean;
 }> {
   const url = `https://www.youtube.com/watch?v=${videoId}&hl=en`;
   const html = await fetchPage(url, referer);
@@ -312,12 +313,15 @@ async function scrapeVideoPage(
   let likeCount: number | null = null;
   let likeCountText = "";
   const likeMatchers = [
+    // current as of 2026-05: like-button uses buttonViewModel with iconName:LIKE
+    // and the count in title. anonymous pages show this shape directly.
+    /"buttonViewModel":\{"iconName":"LIKE","title":"([0-9.,]+[KMB]?)"/i,
     /"accessibilityData":\{"label":"([0-9.,]+[KMB]?)\s*likes?"\}/i,
     /"defaultText":\{"simpleText":"([0-9.,]+[KMB]?)\s*likes?"/i,
     /"label":"([0-9.,]+[KMB]?)\s*likes?"/i,
     /"likeButton[^}]+?"defaultText":\{[^}]*?"simpleText":"([0-9.,]+[KMB]?)"/,
     /"toggledText":\{[^}]*?"simpleText":"([0-9.,]+[KMB]?)\s*likes?"/i,
-    // newer segmentedLikeDislikeButtonViewModel shape
+    // older segmentedLikeDislikeButtonViewModel shape
     /"segmentedLikeDislikeButtonViewModel"[^]*?"likeCount(?:WithCount)?":\{[^}]*?"(?:simpleText|content)":"([0-9.,]+[KMB]?)"/i,
     // factoid card style sometimes shown above comments
     /"factoidViewModel":\{[^}]*?"value":\{[^}]*?"content":"([0-9.,]+[KMB]?)"\}[^}]*?"label":\{[^}]*?"content":"likes?"/i,
@@ -354,7 +358,11 @@ async function scrapeVideoPage(
     }
   }
 
-  return { title, viewCount, viewCountText, likeCount, likeCountText, commentCount };
+  // detect uploader-disabled comments — distinct from a parser miss. yt
+  // ships strings like "Comments are turned off" on the disabled-card.
+  const commentsDisabled = /Comments are turned off/i.test(html);
+
+  return { title, viewCount, viewCountText, likeCount, likeCountText, commentCount, commentsDisabled };
 }
 
 // ---------- Top-level orchestration ----------
@@ -399,14 +407,14 @@ export async function scrapeChannel(
     try {
       const v = await scrapeVideoPage(rv.videoId, refererUrl);
       // page fetched OK but the parser came up empty? probably a markup
-      // shift — surface so the operator can investigate instead of silently
-      // returning null
+      // shift — surface so the operator can investigate. don't warn when the
+      // uploader explicitly disabled comments (a null is the right answer).
       if (v.viewCount !== null && v.likeCount === null) {
         warnings.push(
           `video ${rv.videoId}: page fetched but no like-count pattern matched — markup may have changed (see likeMatchers in src/scrape.ts)`
         );
       }
-      if (v.viewCount !== null && v.commentCount === null) {
+      if (v.viewCount !== null && v.commentCount === null && !v.commentsDisabled) {
         warnings.push(
           `video ${rv.videoId}: page fetched but no comment-count pattern matched — markup may have changed (see commentMatchers in src/scrape.ts)`
         );

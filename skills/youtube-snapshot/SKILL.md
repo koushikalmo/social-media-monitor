@@ -11,6 +11,7 @@ This skill drives two tools provided by the `youtube-snapshot` plugin.
 
 - `youtube_snapshot(channel, maxVideos?)` — read-only, no state. Use for ad-hoc questions.
 - `youtube_status_report(channel, maxVideos?)` — fetches the same data, **also** compares to the last run, persists state, returns deltas. **Use this on the cron schedule.**
+- `notify_telegram_group(message)` — posts a formatted plaintext message to the team's Telegram group via the org's notifications relay. **Use this to deliver the report; do not use OpenClaw's built-in `telegram` channel for this skill.**
 
 ## When to call which
 
@@ -52,7 +53,11 @@ Never call both in the same agent run — they hit the same pages.
 
 `videoChanges` is the subset of videos with at least one non-zero delta. `allVideos` is the full list including unchanged videos — useful only on first run.
 
-## How to format the Telegram message (cron path)
+## Delivery
+
+After formatting the message per the templates below, call `notify_telegram_group({ "message": "<the entire formatted text>" })`. **Don't** use OpenClaw's `telegram` channel for this skill — the org has its own relay and that's what the team has greenlit. One call, one message, done.
+
+## How to format the message (cron path)
 
 ### `isFirstRun: true` → baseline
 

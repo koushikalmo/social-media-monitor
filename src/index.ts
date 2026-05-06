@@ -4,6 +4,7 @@ import * as os from "node:os";
 import * as path from "node:path";
 import { scrapeChannel } from "./scrape.js";
 import { runStatusReport } from "./check.js";
+import { postToNotificationApi } from "./notify.js";
 
 const DEFAULT_WORKSPACE = path.join(os.homedir(), ".openclaw", "workspace");
 
@@ -58,6 +59,27 @@ export default definePluginEntry({
         const p = params as { channel: string; maxVideos?: number };
         const report = await runStatusReport(p.channel, workspace, p.maxVideos ?? 5);
         return { content: [{ type: "text", text: JSON.stringify(report, null, 2) }] };
+      },
+    });
+
+    // posts to the org's notifications relay (HTTP wrapper around their bot).
+    // the agent calls this instead of OpenClaw's built-in telegram channel —
+    // no bot token needed on this server.
+    api.registerTool({
+      name: "notify_telegram_group",
+      description:
+        "Send a formatted plaintext message to the configured Telegram group via the eagle3dstreaming notifications relay. Use this to deliver the YouTube status report. Pass the entire pre-formatted message as `message`. Do not include JSON, headers, or escape sequences — just the text the user should see.",
+      parameters: Type.Object({
+        message: Type.String({
+          description: "The full pre-formatted message text. Multi-line is fine.",
+        }),
+      }),
+      async execute(_id, params) {
+        const p = params as { message: string };
+        const r = await postToNotificationApi(p.message);
+        return {
+          content: [{ type: "text", text: `notified (${r.status}) ${r.bodySnippet}`.trim() }],
+        };
       },
     });
   },

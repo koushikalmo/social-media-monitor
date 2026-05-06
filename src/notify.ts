@@ -1,10 +1,12 @@
-// thin POST to the eagle3dstreaming notifications relay. no auth header on
-// the wire — the relay is gated by something else (network/IP). url and
-// chat_id are env-overridable so the same code works for staging or other
-// groups without a rebuild.
+// posts the formatted status message to the org's notifications relay.
+// the relay does the actual telegram-bot work; this side just speaks HTTP.
+//
+// env vars:
+//   NOTIFY_URL      defaults to the eagle3dstreaming relay
+//   NOTIFY_CHAT_ID  required. no default — we don't want a stale chat_id
+//                   in source ever sending real updates to a test group.
 
 const DEFAULT_URL = "https://notifications.eagle3dstreaming.com/message_sent";
-const DEFAULT_CHAT_ID = -5100088424;
 const HTTP_TIMEOUT_MS = 15_000;
 
 function url(): string {
@@ -12,12 +14,17 @@ function url(): string {
 }
 
 function chatId(): number {
-  const v = process.env.NOTIFY_CHAT_ID;
-  if (v && v.trim()) {
-    const n = parseInt(v, 10);
-    if (Number.isFinite(n)) return n;
+  const raw = process.env.NOTIFY_CHAT_ID;
+  if (!raw || !raw.trim()) {
+    throw new Error(
+      "notify: NOTIFY_CHAT_ID env var not set. point it at the relay's group id (e.g. -5100088425) before running the gateway."
+    );
   }
-  return DEFAULT_CHAT_ID;
+  const n = parseInt(raw, 10);
+  if (!Number.isFinite(n)) {
+    throw new Error(`notify: NOTIFY_CHAT_ID="${raw}" isn't a valid integer`);
+  }
+  return n;
 }
 
 export async function postToNotificationApi(message: string): Promise<{
@@ -27,10 +34,11 @@ export async function postToNotificationApi(message: string): Promise<{
   if (!message || !message.trim()) {
     throw new Error("notify: message is empty");
   }
+  const body = JSON.stringify({ message, input_chat_id: chatId() });
   const res = await fetch(url(), {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ message, input_chat_id: chatId() }),
+    body,
     signal: AbortSignal.timeout(HTTP_TIMEOUT_MS),
   });
   const text = await res.text().catch(() => "");

@@ -9,19 +9,21 @@ This skill drives two tools provided by the `youtube-snapshot` plugin.
 
 ## Tools
 
-- `youtube_snapshot(channel, maxVideos?)` — read-only, no state. Use for ad-hoc questions.
-- `youtube_status_report(channel, maxVideos?)` — fetches the same data, **also** compares to the last run, persists state, returns deltas. **Use this on the cron schedule.**
-- `notify_telegram_group(message)` — posts a formatted plaintext message to the team's Telegram group via the org's notifications relay. **Use this to deliver the report; do not use OpenClaw's built-in `telegram` channel for this skill.**
+- **`youtube_post_status_report(channel, maxVideos?)`** — **the cron path.** Single call: scrapes, diffs vs last run, persists state, formats the message, posts to the team's Telegram group. **For scheduled runs, call only this tool. Do not call any other tool after it.**
+- `youtube_snapshot(channel, maxVideos?)` — read-only, no state. Use for ad-hoc questions where the user wants raw current data.
+- `youtube_status_report(channel, maxVideos?)` — same as `youtube_post_status_report` but returns the JSON without posting. Use only if the user explicitly asks for the data without delivery.
+- `notify_telegram_group(message)` — posts an arbitrary plaintext string to the Telegram group. Use only when the user asks for a custom (non-status-report) message to be delivered.
 
 ## When to call which
 
 | User says / cron fires | Tool |
 |---|---|
+| The 3-hour cron message *("run the periodic check on …")* | **`youtube_post_status_report`** (single call, no chaining) |
 | "snapshot @foo" / "what's @foo doing right now?" / "give me the latest stats" | `youtube_snapshot` |
-| The 3-hour cron message *("run the periodic check on …")* | `youtube_status_report` |
-| "what changed in the last 3 hours?" | `youtube_status_report` |
+| "what changed in the last 3 hours?" (just data, don't post) | `youtube_status_report` |
+| "send a custom note to the team Telegram" | `notify_telegram_group` with the text the user provided |
 
-Never call both in the same agent run — they hit the same pages.
+Never call multiple data-fetching tools in the same run — they hit the same pages.
 
 ## Output of `youtube_status_report`
 

@@ -5,6 +5,7 @@ import * as path from "node:path";
 import { scrapeChannel } from "./scrape.js";
 import { runStatusReport } from "./check.js";
 import { postToNotificationApi } from "./notify.js";
+import { formatStatusReport } from "./format.js";
 
 const DEFAULT_WORKSPACE = path.join(os.homedir(), ".openclaw", "workspace");
 
@@ -62,9 +63,45 @@ export default definePluginEntry({
       },
     });
 
-    // posts to the org's notifications relay (HTTP wrapper around their bot).
-    // the agent calls this instead of OpenClaw's built-in telegram channel —
-    // no bot token needed on this server.
+    // all-in-one tool for the cron path. agent only needs to call this once;
+    // scrape + diff + format + post happen in deterministic JS, no LLM
+    // chaining required. small models that drop the second tool call when
+    // there's a multi-step chain reliably handle this single call.
+    api.registerTool({
+      name: "youtube_post_status_report",
+      description:
+        "All-in-one: scrape a YouTube channel, compare against the last run, format a Telegram-ready status message, and post it to the configured group via the notifications relay. Call this exactly once per scheduled cron run; you don't need to call any other tool after it. Returns a short confirmation string.",
+      parameters: Type.Object({
+        channel: Type.String({
+          description: "Channel ID like UCxxxxxx or a handle like @eagle3dstreaming",
+        }),
+        maxVideos: Type.Optional(
+          Type.Integer({
+            description: "How many recent videos to track (default 5)",
+            default: 5,
+          })
+        ),
+      }),
+      async execute(_id, params) {
+        const p = params as { channel: string; maxVideos?: number };
+        const report = await runStatusReport(p.channel, workspace, p.maxVideos ?? 5);
+        const formatted = formatStatusReport(report);
+        const result = await postToNotificationApi(formatted);
+        return {
+          content: [
+            {
+              type: "text",
+              text: `posted to telegram (${result.status}). channel=${report.channelTitle} mode=${report.scrapeMode} firstRun=${report.isFirstRun} chars=${formatted.length}`,
+            },
+          ],
+        };
+      },
+    });
+
+    // legacy / opt-in tool — kept for the agent to call manually if a user
+    // asks for a free-form notification, or when the SKILL teaches the agent
+    // to format custom messages. the cron path uses youtube_post_status_report
+    // above.
     api.registerTool({
       name: "notify_telegram_group",
       description:

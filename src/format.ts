@@ -1,7 +1,6 @@
 import type { StatusReport, VideoDelta } from "./diff.js";
 
-// builds the user-visible Telegram message from a StatusReport.
-// no LLM involvement — the agent just passes this string to the relay.
+// renders a StatusReport into the plain-text body the relay forwards to Telegram.
 
 function fmtNum(n: number | null): string {
   return n === null ? "—" : n.toLocaleString();
@@ -37,12 +36,19 @@ export function formatStatusReport(r: StatusReport): string {
     if (r.allVideos.length > 0) {
       lines.push("");
       lines.push(`Tracking ${r.allVideos.length} recent videos:`);
-      for (const v of r.allVideos) {
+      // telegram caps messages at 4096 chars; 15 videos × ~180 char/video fits.
+      const MAX_BASELINE_VIDEOS = 15;
+      const shown = r.allVideos.slice(0, MAX_BASELINE_VIDEOS);
+      for (const v of shown) {
         lines.push(`• ${v.title}`);
         lines.push(`  https://youtu.be/${v.videoId}`);
         lines.push(
           `  views: ${fmtNum(v.viewAfter)}, likes: ${fmtNum(v.likeAfter)}, comments: ${fmtNum(v.commentAfter)}`
         );
+      }
+      const remaining = r.allVideos.length - shown.length;
+      if (remaining > 0) {
+        lines.push(`…and ${remaining} more video${remaining === 1 ? "" : "s"} (full list saved; future updates report changes on all ${r.allVideos.length}).`);
       }
     }
     lines.push("");

@@ -1,17 +1,5 @@
-// standalone direct-invocation runner. no openclaw, no llm, no agent.
-// designed to be called from a system scheduler (Windows Task Scheduler /
-// cron / launchd) every N hours. does scrape + diff + format + post in one
-// deterministic pass, then exits.
-//
-// env vars:
-//   NOTIFY_CHAT_ID   required (telegram chat id, e.g. "-5078640878")
-//   NOTIFY_URL       optional (defaults to the eagle3dstreaming relay)
-//   YT_CHANNEL       optional (default "UCA_NxRFfbYSG3kOeHak0BjQ")
-//   YT_MAX_VIDEOS    optional (default 5)
-//   YT_WORKSPACE     optional (default ~/.openclaw/workspace)
-//
-// run:
-//   node dist/cron-runner.js
+// invoked from Windows Task Scheduler via run-cron.bat. one shot, then exits.
+// env: NOTIFY_CHAT_ID (req), NOTIFY_URL, YT_CHANNEL, YT_MAX_VIDEOS, YT_WORKSPACE.
 
 import * as os from "node:os";
 import * as path from "node:path";
@@ -20,7 +8,10 @@ import { formatStatusReport } from "./format.js";
 import { postToNotificationApi } from "./notify.js";
 
 const channel = process.env.YT_CHANNEL ?? "UCA_NxRFfbYSG3kOeHak0BjQ";
-const maxVideos = parseInt(process.env.YT_MAX_VIDEOS ?? "5", 10);
+// "all" / "0" → no limit
+const maxVideosRaw = (process.env.YT_MAX_VIDEOS ?? "5").trim().toLowerCase();
+const maxVideos =
+  maxVideosRaw === "all" || maxVideosRaw === "0" ? 0 : parseInt(maxVideosRaw, 10);
 const workspace =
   process.env.YT_WORKSPACE ?? path.join(os.homedir(), ".openclaw", "workspace");
 

@@ -234,5 +234,32 @@ console.log("\n--- F8: large numbers use thousand-separators ---");
   contains(out, "(+501)", "F8: delta with sign");
 }
 
+// ---------- F9: large baseline truncates to fit telegram's 4096-char cap ----------
+
+console.log("\n--- F9: baseline with 30 videos truncates ---");
+{
+  const r = baseReport({
+    isFirstRun: true,
+    subscriberBefore: null,
+    subscriberDelta: null,
+    allVideos: Array.from({ length: 30 }, (_, i) => ({
+      videoId: `vid${i.toString().padStart(2, "0")}`,
+      title: `Video ${i} — a reasonably long title to simulate real youtube titles`,
+      likeBefore: null, likeAfter: 10 + i, likeDelta: null,
+      commentBefore: null, commentAfter: i, commentDelta: null,
+      viewBefore: null, viewAfter: 1000 + i * 50, viewDelta: null,
+      likeBecameNull: false, commentBecameNull: false,
+    })),
+  });
+  const out = formatStatusReport(r);
+  contains(out, "Tracking 30 recent videos", "F9: total count reflects all 30");
+  contains(out, "Video 0 ", "F9: video 0 included");
+  contains(out, "Video 14 ", "F9: video 14 (15th) included");
+  notContains(out, "Video 15 ", "F9: video 15 (16th) truncated out");
+  notContains(out, "Video 29 ", "F9: last video truncated out");
+  contains(out, "and 15 more videos", "F9: truncation footer shows remaining count");
+  ok(out.length < 4096, `F9: message fits Telegram limit (length=${out.length})`);
+}
+
 console.log(`\n--- summary: ${passed} passed, ${failed} failed ---\n`);
 process.exit(failed === 0 ? 0 : 1);

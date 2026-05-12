@@ -5,7 +5,7 @@
 process.env.YT_SCRAPE_INTER_DELAY_MS = "5";
 process.env.YT_SCRAPE_RETRY_MS = "10";
 
-import { scrapeChannel } from "./scrape.js";
+import { scrapeChannel, jitteredDelay } from "./scrape.js";
 
 let passed = 0;
 let failed = 0;
@@ -541,6 +541,101 @@ ${"<!-- " + "x".repeat(6000) + " -->"}
   } finally {
     restore();
   }
+}
+
+// --- T11: new lockupViewModel markup (2025–2026 yt rollout) ---
+
+console.log("\n--- T11: lockupViewModel-shaped channel page ---");
+{
+  function makeLockupChannelHtml(videos: Array<{ id: string; title: string; viewText: string }>): string {
+    const data = {
+      metadata: { channelMetadataRenderer: { title: "Lockup Channel" } },
+      contents: {
+        items: videos.map((v) => ({
+          lockupViewModel: {
+            contentId: v.id,
+            contentType: "LOCKUP_CONTENT_TYPE_VIDEO",
+            metadata: {
+              lockupMetadataViewModel: {
+                title: { content: v.title },
+                metadata: {
+                  contentMetadataViewModel: {
+                    metadataRows: [
+                      {
+                        metadataParts: [
+                          { text: { content: v.viewText } },
+                          { text: { content: "1 month ago" } },
+                        ],
+                      },
+                    ],
+                  },
+                },
+              },
+            },
+          },
+        })),
+      },
+    };
+    const padding = "<!-- " + "x".repeat(6000) + " -->";
+    return `<!DOCTYPE html><html><head>
+<script>var ytInitialData = ${JSON.stringify(data)};</script>
+${padding}
+</head><body>
+"channelId":"UCLOCKUPTEST1234567890AB"
+"content":"5K subscribers"
+</body></html>`;
+  }
+  const lockupHtml = makeLockupChannelHtml([
+    { id: "lockA111111", title: "Lockup video alpha", viewText: "1,234 views" },
+    { id: "lockB222222", title: "Lockup video beta", viewText: "999 views" },
+    { id: "lockC333333", title: "Lockup video gamma", viewText: "50 views" },
+  ]);
+  const restore = installMockFetch((url) => {
+    if (isVideoUrl(url)) {
+      const id = videoIdFromUrl(url);
+      return {
+        status: 200,
+        body: makeVideoHtml({
+          title: `Video ${id}`,
+          viewText: "1,234 views",
+          likeCount: 100,
+          commentCount: 5,
+        }),
+      };
+    }
+    return { status: 200, body: lockupHtml };
+  });
+  try {
+    const snap = await scrapeChannel("UCLOCKUPTEST1234567890AB", 3);
+    eq(snap.videos.length, 3, "T11: extracted 3 videos from lockupViewModel");
+    eq(snap.videos[0].videoId, "lockA111111", "T11: first video id from contentId");
+    eq(snap.videos[1].videoId, "lockB222222", "T11: second video id from contentId");
+    eq(snap.videos[2].videoId, "lockC333333", "T11: third video id from contentId");
+    ok(
+      snap.videos[0].title === "Lockup video alpha" || snap.videos[0].title === "Video lockA111111",
+      "T11: title resolved (either from channel-page lockup or video page)"
+    );
+  } finally {
+    restore();
+  }
+}
+
+// --- T12: pacing math holds the 1-minute floor at base=80000 ---
+
+console.log("\n--- T12: jitteredDelay(80000) stays >= 60s ---");
+{
+  const N = 5000;
+  let min = Infinity, max = -Infinity, sum = 0;
+  for (let i = 0; i < N; i++) {
+    const d = jitteredDelay(80000);
+    if (d < min) min = d;
+    if (d > max) max = d;
+    sum += d;
+  }
+  const avg = Math.round(sum / N);
+  ok(min >= 60000, `T12: min delay >= 60000ms (got ${min})`);
+  ok(max <= 100000, `T12: max delay <= 100000ms (got ${max})`);
+  ok(avg >= 78000 && avg <= 82000, `T12: avg ~80000ms (got ${avg})`);
 }
 
 // --- T8: live network smoke test (best-effort, skipped if rate-limited) ---

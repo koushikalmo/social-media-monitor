@@ -1,10 +1,6 @@
-// posts the formatted status message to the org's notifications relay.
-// the relay does the actual telegram-bot work; this side just speaks HTTP.
-//
-// env vars:
-//   NOTIFY_URL      defaults to the eagle3dstreaming relay
-//   NOTIFY_CHAT_ID  required. no default — we don't want a stale chat_id
-//                   in source ever sending real updates to a test group.
+// POST to the eagle3dstreaming relay which fans out to Telegram.
+// NOTIFY_CHAT_ID is required at call time — never default it; a stale id
+// in source would silently spam a test group on real runs.
 
 const DEFAULT_URL = "https://notifications.eagle3dstreaming.com/message_sent";
 const HTTP_TIMEOUT_MS = 15_000;

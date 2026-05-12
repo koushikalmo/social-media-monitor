@@ -40,8 +40,8 @@ function sleep(ms: number): Promise<void> {
   return new Promise((r) => setTimeout(r, ms));
 }
 
-// returns the base delay ± jitter; clamped at zero
-function jitteredDelay(baseMs: number): number {
+// returns the base delay ± jitter; clamped at zero. exported for pacing tests.
+export function jitteredDelay(baseMs: number): number {
   if (baseMs <= 0) return 0;
   const range = baseMs * INTER_REQUEST_JITTER_RATIO * 2;
   const offset = Math.random() * range - range / 2;
@@ -219,10 +219,54 @@ type RawVideo = {
 function extractVideosFromInitialData(data: unknown): RawVideo[] {
   const out: RawVideo[] = [];
   const seen = new Set<string>();
+
+  // current shape: lockupViewModel. videoId in contentId, title nested in metadata.
+  walk(data, (n) => {
+    const lockup = n.lockupViewModel as Record<string, unknown> | undefined;
+    if (!lockup || typeof lockup !== "object") return;
+    if (lockup.contentType !== "LOCKUP_CONTENT_TYPE_VIDEO") return;
+    const videoId = asString(lockup.contentId);
+    if (!videoId || seen.has(videoId)) return;
+
+    const meta = lockup.metadata as Record<string, unknown> | undefined;
+    const lmvm = meta?.lockupMetadataViewModel as Record<string, unknown> | undefined;
+    const titleNode = lmvm?.title as Record<string, unknown> | undefined;
+    const title = asString(titleNode?.content) || readRuns(titleNode);
+    if (!title) return;
+
+    let viewCountText = "";
+    const innerMeta = lmvm?.metadata as Record<string, unknown> | undefined;
+    const cmvm = innerMeta?.contentMetadataViewModel as Record<string, unknown> | undefined;
+    const rows = cmvm?.metadataRows;
+    if (Array.isArray(rows)) {
+      outer: for (const row of rows) {
+        const parts = (row as Record<string, unknown>)?.metadataParts;
+        if (!Array.isArray(parts)) continue;
+        for (const p of parts) {
+          const txt = asString(
+            ((p as Record<string, unknown>).text as Record<string, unknown> | undefined)?.content
+          );
+          if (/view/i.test(txt)) {
+            viewCountText = txt;
+            break outer;
+          }
+        }
+      }
+    }
+
+    seen.add(videoId);
+    out.push({
+      videoId,
+      title,
+      viewCountText,
+      viewCount: parseFormattedNumber(viewCountText.replace(/views?/i, "")),
+    });
+  });
+
+  // legacy renderers — still on some pages, and used by test fixtures.
   walk(data, (n) => {
     const videoId = asString(n.videoId);
     if (!videoId || seen.has(videoId)) return;
-    // grid/video/richItem renderers all share these field names
     const titleNode = (n.title ?? n.headline) as unknown;
     const title = readRuns(titleNode);
     if (!title) return;
@@ -239,6 +283,7 @@ function extractVideosFromInitialData(data: unknown): RawVideo[] {
       viewCount: parseFormattedNumber(viewCountText.replace(/views?/i, "")),
     });
   });
+
   return out;
 }
 
@@ -373,15 +418,34 @@ export async function scrapeChannel(
 ): Promise<ChannelSnapshot> {
   const warnings: string[] = [];
   const { channelId, pageHtml } = await resolveChannelId(channelInput);
-  const data = extractInitialData(pageHtml);
+  const homeData = extractInitialData(pageHtml);
 
-  const channelTitle = extractChannelTitle(pageHtml, data) || channelId;
+  const channelTitle = extractChannelTitle(pageHtml, homeData) || channelId;
   const subInfo = extractSubscriberInfo(pageHtml);
   if (subInfo.count === null) {
     warnings.push("subscriber count not found in channel page markup");
   }
 
-  const rawVideos = extractVideosFromInitialData(data).slice(0, maxVideos);
+  // /videos tab is channel-only; home page mixes in featured carousels.
+  let videoListData: unknown = homeData;
+  try {
+    const videosUrl = `https://www.youtube.com/channel/${channelId}/videos?hl=en`;
+    const videosHtml = await fetchPage(
+      videosUrl,
+      `https://www.youtube.com/channel/${channelId}`
+    );
+    videoListData = extractInitialData(videosHtml);
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    warnings.push(
+      `/videos tab fetch failed (${msg}) — falling back to channel home page for video list`
+    );
+  }
+
+  // maxVideos <= 0 → no limit
+  const allRawVideos = extractVideosFromInitialData(videoListData);
+  const rawVideos =
+    maxVideos > 0 ? allRawVideos.slice(0, maxVideos) : allRawVideos;
   if (rawVideos.length === 0) {
     warnings.push("no videos found on channel page — possibly empty channel or markup change");
   }

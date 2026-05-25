@@ -1,0 +1,94 @@
+
+1. Open Command Prompt as Administrator.
+
+2. Clone the repo:
+       cd C:\Users\MS-18\Desktop
+       git clone <repo-url> social-media-monitor
+       cd social-media-monitor
+
+3. Install dependencies and build:
+       npm install
+       npm run build
+
+4. Open run-cron.bat in Notepad and confirm these env vars are set:
+       set NOTIFY_CHAT_ID=-5078640878
+       set YT_CHANNEL=UCA_NxRFfbYSG3kOeHak0BjQ
+       set YT_MAX_VIDEOS=all
+       set YT_VIEWS_ONLY=true
+       set YT_SUBSCRIBER_SOURCE=mixerno
+       set YT_SCRAPE_INTER_DELAY_MS=80000
+
+   Change NOTIFY_CHAT_ID and YT_CHANNEL for a different group/channel.
+
+5. Smoke test - run once manually:
+       run-cron.bat
+       type cron.log
+
+   Last log block should show:
+       [cron-runner] scrape: mode=views-only firstRun=true subs=...->1010 ...
+       [cron-runner] posted: status=200 ...
+       [cron-runner] done in ~10s
+
+   Check the Telegram group - baseline messages should arrive.
+
+
+SCHEDULE THE TASK (every 3 hours)
+---------------------------------
+
+In an Administrator PowerShell prompt, run as ONE single command line
+(use semicolons, no actual newlines):
+
+  $action = New-ScheduledTaskAction -Execute 'C:\Users\MS-18\Desktop\social-media-monitor\run-cron.bat'; $trigger = New-ScheduledTaskTrigger -Once -At (Get-Date).AddMinutes(2) -RepetitionInterval (New-TimeSpan -Hours 3); $settings = New-ScheduledTaskSettingsSet -StartWhenAvailable -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -DontStopOnIdleEnd -ExecutionTimeLimit (New-TimeSpan -Minutes 30) -RestartCount 3 -RestartInterval (New-TimeSpan -Minutes 5); Register-ScheduledTask -TaskName 'YT Status Report' -Action $action -Trigger $trigger -Settings $settings -User $env:USERNAME -RunLevel Limited -Description 'YouTube channel stats to Telegram every 3 hours'
+
+Key flags:
+  -StartWhenAvailable      = fire missed runs after the machine boots
+  -RestartCount 3          = retry 3 times if a run fails
+  -RestartInterval 5min    = wait 5 minutes between retries
+  -ExecutionTimeLimit 30m  = kill if any run exceeds 30 minutes
+
+
+VERIFY THE SCHEDULE
+-------------------
+
+  schtasks /Query /TN "YT Status Report" /V /FO LIST | findstr /R "Status: Last Result: Next Run Time: Last Run Time:"
+
+Expected:
+  Status:         Ready
+  Last Run Time:  <when the manual run happened>
+  Last Result:    0
+  Next Run Time:  <3 hours after Last Run Time>
+
+Confirm missed-run recovery is on:
+
+  schtasks /Query /TN "YT Status Report" /XML | findstr "StartWhenAvailable"
+
+Expected:
+  <StartWhenAvailable>true</StartWhenAvailable>
+
+
+DAILY OPERATIONS
+----------------
+
+Tail the log while a run is in progress:
+  powershell -c "Get-Content cron.log -Wait -Tail 5"
+
+Force an immediate run (test the schedule path without waiting):
+  schtasks /Run /TN "YT Status Report"
+
+Pause the schedule (no fires until re-enabled):
+  schtasks /Change /TN "YT Status Report" /DISABLE
+
+Resume:
+  schtasks /Change /TN "YT Status Report" /ENABLE
+
+Deploy a code update:
+  cd C:\Users\MS-18\Desktop\social-media-monitor
+  git pull
+  npm run build
+  (task picks up new code on next fire automatically)
+
+Reset state (forces a fresh baseline on the next run):
+  del /Q "%USERPROFILE%\.openclaw\workspace\youtube-state\UCA_NxRFfbYSG3kOeHak0BjQ.json"
+
+Delete the schedule entirely:
+  schtasks /Delete /TN "YT Status Report" /F

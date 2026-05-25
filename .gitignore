@@ -5,3 +5,12 @@ dist/
 .env
 .env.local
 
+# local testing — runner scaffolding is committed, but secrets and runtime
+# artifacts (state, logs) stay out of git.
+local-test/.env
+local-test/workspace/
+local-test/*.log
+local-test/cron.log
+
+# production runtime artifact (created by run-cron.bat on the Windows server)
+cron.log

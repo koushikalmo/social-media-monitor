@@ -42,9 +42,11 @@ export function formatStatusReport(r: StatusReport): string {
       for (const v of shown) {
         lines.push(`• ${v.title}`);
         lines.push(`  https://youtu.be/${v.videoId}`);
-        lines.push(
-          `  views: ${fmtNum(v.viewAfter)}, likes: ${fmtNum(v.likeAfter)}, comments: ${fmtNum(v.commentAfter)}`
-        );
+        const parts: string[] = [];
+        if (v.viewAfter !== null) parts.push(`views: ${fmtNum(v.viewAfter)}`);
+        if (v.likeAfter !== null) parts.push(`likes: ${fmtNum(v.likeAfter)}`);
+        if (v.commentAfter !== null) parts.push(`comments: ${fmtNum(v.commentAfter)}`);
+        if (parts.length > 0) lines.push(`  ${parts.join(", ")}`);
       }
       const remaining = r.allVideos.length - shown.length;
       if (remaining > 0) {

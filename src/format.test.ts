@@ -69,8 +69,10 @@ console.log("\n--- F1: first run baseline ---");
   contains(out, "Tracking 2 recent videos", "F1: shows video count");
   contains(out, "First Video", "F1: includes first video title");
   contains(out, "Second Video", "F1: includes second video title");
-  contains(out, "10", "F1: includes first video's like count");
-  contains(out, "—", "F1: shows em-dash for video 2's null likes");
+  contains(out, "likes: 10", "F1: includes first video's like count");
+  contains(out, "views: 50", "F1: video 2's view count still shown");
+  notContains(out, "likes: —", "F1: null like metric omitted (not rendered as em-dash)");
+  notContains(out, "comments: —", "F1: null comment metric omitted");
   contains(out, "Saved baseline", "F1: ends with baseline-saved footer");
   notContains(out, "since last check", "F1: no delta language on first run");
 }
@@ -259,6 +261,41 @@ console.log("\n--- F9: baseline with 30 videos truncates ---");
   notContains(out, "Video 29 ", "F9: last video truncated out");
   contains(out, "and 15 more videos", "F9: truncation footer shows remaining count");
   ok(out.length < 4096, `F9: message fits Telegram limit (length=${out.length})`);
+}
+
+// ---------- F10: views-only baseline ----------
+
+console.log("\n--- F10: views-only baseline renders just views per video ---");
+{
+  const r = baseReport({
+    isFirstRun: true,
+    scrapeMode: "views-only",
+    subscriberBefore: null,
+    subscriberDelta: null,
+    allVideos: [
+      {
+        videoId: "vid1", title: "Views-Only Video 1",
+        likeBefore: null, likeAfter: null, likeDelta: null,
+        commentBefore: null, commentAfter: null, commentDelta: null,
+        viewBefore: null, viewAfter: 1920, viewDelta: null,
+        likeBecameNull: false, commentBecameNull: false,
+      },
+      {
+        videoId: "vid2", title: "Views-Only Video 2",
+        likeBefore: null, likeAfter: null, likeDelta: null,
+        commentBefore: null, commentAfter: null, commentDelta: null,
+        viewBefore: null, viewAfter: 62, viewDelta: null,
+        likeBecameNull: false, commentBecameNull: false,
+      },
+    ],
+  });
+  const out = formatStatusReport(r);
+  contains(out, "views: 1,920", "F10: video 1 view count shown");
+  contains(out, "views: 62", "F10: video 2 view count shown");
+  notContains(out, "likes:", "F10: no 'likes:' anywhere when all videos have null likes");
+  notContains(out, "comments:", "F10: no 'comments:' anywhere when all videos have null comments");
+  notContains(out, "views-only scrape", "F10: views-only mode doesn't emit degradation footer");
+  notContains(out, "channel-only scrape", "F10: views-only ≠ channel-only");
 }
 
 console.log(`\n--- summary: ${passed} passed, ${failed} failed ---\n`);

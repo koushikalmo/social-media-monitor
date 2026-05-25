@@ -1,6 +1,8 @@
 // fetch + regex against ytInitialData. yt's markup shifts every few months,
 // so every extractor has a fallback chain.
 
+import { getExactSubscriberCount, type SubscriberSource } from "./yt-subscribers.js";
+
 const CHROME_UA =
   "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36";
 
@@ -58,7 +60,7 @@ export type VideoSnapshot = {
   commentCount: number | null;
 };
 
-export type SnapshotMode = "full" | "partial" | "channel-only";
+export type SnapshotMode = "full" | "partial" | "channel-only" | "views-only";
 
 export type ChannelSnapshot = {
   channelId: string;
@@ -410,6 +412,67 @@ async function scrapeVideoPage(
   return { title, viewCount, viewCountText, likeCount, likeCountText, commentCount, commentsDisabled };
 }
 
+// ---------- Continuation / pagination ----------
+
+type InnertubeConfig = {
+  apiKey: string;
+  context: { client: { clientName: string; clientVersion: string; hl: string; gl: string } };
+};
+
+function extractInnertubeConfig(html: string): InnertubeConfig | null {
+  const keyMatch = html.match(/"INNERTUBE_API_KEY":"([^"]+)"/);
+  if (!keyMatch) return null;
+  const versionMatch = html.match(/"INNERTUBE_CLIENT_VERSION":"([^"]+)"/);
+  const nameMatch = html.match(/"INNERTUBE_CLIENT_NAME":"([^"]+)"/);
+  return {
+    apiKey: keyMatch[1],
+    context: {
+      client: {
+        clientName: nameMatch?.[1] ?? "WEB",
+        clientVersion: versionMatch?.[1] ?? "2.20260101.00.00",
+        hl: "en",
+        gl: "US",
+      },
+    },
+  };
+}
+
+function extractContinuationToken(data: unknown): string | null {
+  let token: string | null = null;
+  walk(data, (n) => {
+    if (token) return;
+    const cir = n.continuationItemRenderer as Record<string, unknown> | undefined;
+    if (!cir) return;
+    const endpoint = cir.continuationEndpoint as Record<string, unknown> | undefined;
+    const cmd = endpoint?.continuationCommand as Record<string, unknown> | undefined;
+    if (typeof cmd?.token === "string") token = cmd.token;
+  });
+  return token;
+}
+
+async function fetchContinuation(
+  token: string,
+  cfg: InnertubeConfig,
+  referer: string
+): Promise<unknown> {
+  const url = `https://www.youtube.com/youtubei/v1/browse?key=${encodeURIComponent(cfg.apiKey)}`;
+  const body = JSON.stringify({ context: cfg.context, continuation: token });
+  const res = await fetch(url, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Origin: "https://www.youtube.com",
+      Referer: referer,
+      "User-Agent": CHROME_UA,
+      "Accept-Language": "en-US,en;q=0.9",
+    },
+    body,
+    signal: AbortSignal.timeout(HTTP_TIMEOUT_MS),
+  });
+  if (!res.ok) throw new Error(`continuation HTTP ${res.status}`);
+  return res.json();
+}
+
 // ---------- Top-level orchestration ----------
 
 export async function scrapeChannel(
@@ -421,20 +484,44 @@ export async function scrapeChannel(
   const homeData = extractInitialData(pageHtml);
 
   const channelTitle = extractChannelTitle(pageHtml, homeData) || channelId;
-  const subInfo = extractSubscriberInfo(pageHtml);
+  let subInfo = extractSubscriberInfo(pageHtml);
   if (subInfo.count === null) {
     warnings.push("subscriber count not found in channel page markup");
   }
 
+  // override the rounded HTML count with an exact value when the env opts in
+  const rawSubSource = (process.env.YT_SUBSCRIBER_SOURCE ?? "").toLowerCase();
+  const subSource: SubscriberSource | null =
+    rawSubSource === "mixerno"
+      ? "mixerno"
+      : rawSubSource === "livecounts"
+        ? "livecounts"
+        : null;
+  if (subSource) {
+    const lookup = await getExactSubscriberCount(channelId, subSource);
+    if (lookup.count !== null) {
+      subInfo = {
+        count: lookup.count,
+        text: `${lookup.count.toLocaleString()} subscribers`,
+      };
+    } else {
+      warnings.unshift(
+        `subscriber lookup rate-limited — using rounded YouTube count this run (${(lookup.error ?? "").slice(0, 80)})`
+      );
+    }
+  }
+
   // /videos tab is channel-only; home page mixes in featured carousels.
   let videoListData: unknown = homeData;
+  let videoListHtml: string = pageHtml;
   try {
     const videosUrl = `https://www.youtube.com/channel/${channelId}/videos?hl=en`;
-    const videosHtml = await fetchPage(
+    const fetched = await fetchPage(
       videosUrl,
       `https://www.youtube.com/channel/${channelId}`
     );
-    videoListData = extractInitialData(videosHtml);
+    videoListData = extractInitialData(fetched);
+    videoListHtml = fetched;
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
     warnings.push(
@@ -442,13 +529,52 @@ export async function scrapeChannel(
     );
   }
 
+  // initial /videos render ships ~30 videos; follow continuation tokens for the rest.
+  const collected: RawVideo[] = extractVideosFromInitialData(videoListData);
+  const seenIds = new Set(collected.map((v) => v.videoId));
+  const cfg = extractInnertubeConfig(videoListHtml);
+  let continuation = extractContinuationToken(videoListData);
+  let pageCount = 0;
+  const MAX_PAGES = 60;
+  while (
+    cfg &&
+    continuation &&
+    pageCount < MAX_PAGES &&
+    (maxVideos <= 0 || collected.length < maxVideos)
+  ) {
+    try {
+      await sleep(jitteredDelay(1500));
+      const next = await fetchContinuation(
+        continuation,
+        cfg,
+        `https://www.youtube.com/channel/${channelId}/videos`
+      );
+      const moreVideos = extractVideosFromInitialData(next);
+      let added = 0;
+      for (const v of moreVideos) {
+        if (!seenIds.has(v.videoId)) {
+          collected.push(v);
+          seenIds.add(v.videoId);
+          added++;
+        }
+      }
+      continuation = extractContinuationToken(next);
+      pageCount++;
+      if (added === 0) break;
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      warnings.push(`pagination stopped at page ${pageCount + 1}: ${msg}`);
+      break;
+    }
+  }
+
   // maxVideos <= 0 → no limit
-  const allRawVideos = extractVideosFromInitialData(videoListData);
-  const rawVideos =
-    maxVideos > 0 ? allRawVideos.slice(0, maxVideos) : allRawVideos;
+  const rawVideos = maxVideos > 0 ? collected.slice(0, maxVideos) : collected;
   if (rawVideos.length === 0) {
     warnings.push("no videos found on channel page — possibly empty channel or markup change");
   }
+
+  const viewsOnly = (process.env.YT_VIEWS_ONLY ?? "").toLowerCase() === "true";
 
   // sequential with delay + referer; bursts and cold scrapes are the easy bot signals
   const refererUrl = `https://www.youtube.com/channel/${channelId}`;
@@ -457,7 +583,21 @@ export async function scrapeChannel(
   let consecutiveFailures = 0;
   let earlyBailReason: string | null = null;
 
-  for (let i = 0; i < rawVideos.length; i++) {
+  if (viewsOnly) {
+    // /videos tab already exposes exact view counts; skip per-video pages.
+    for (const rv of rawVideos) {
+      videoResults.push({
+        videoId: rv.videoId,
+        title: rv.title,
+        viewCount: rv.viewCount,
+        viewCountText: rv.viewCountText,
+        likeCount: null,
+        likeCountText: "",
+        commentCount: null,
+      });
+    }
+  } else {
+    for (let i = 0; i < rawVideos.length; i++) {
     const rv = rawVideos[i];
 
     // already bailed → stub the rest with channel-page data only
@@ -506,18 +646,23 @@ export async function scrapeChannel(
         earlyBailReason = `${consecutiveFailures} consecutive video-page failures`;
       }
     }
+    }
   }
 
-  const failedCount = videoResults.filter(
-    (v) => v.likeCount === null && v.commentCount === null
-  ).length;
   let mode: SnapshotMode;
-  if (failedCount === 0) {
-    mode = "full";
-  } else if (failedCount === videoResults.length && videoResults.length > 0) {
-    mode = "channel-only";
+  if (viewsOnly) {
+    mode = videoResults.length > 0 ? "views-only" : "channel-only";
   } else {
-    mode = "partial";
+    const failedCount = videoResults.filter(
+      (v) => v.likeCount === null && v.commentCount === null
+    ).length;
+    if (failedCount === 0) {
+      mode = "full";
+    } else if (failedCount === videoResults.length && videoResults.length > 0) {
+      mode = "channel-only";
+    } else {
+      mode = "partial";
+    }
   }
 
   // collapse N near-identical "video X failed" lines into one summary when

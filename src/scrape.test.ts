@@ -638,6 +638,33 @@ console.log("\n--- T12: jitteredDelay(80000) stays >= 60s ---");
   ok(avg >= 78000 && avg <= 82000, `T12: avg ~80000ms (got ${avg})`);
 }
 
+// --- T13: views-only mode skips per-video pages ---
+
+console.log("\n--- T13: YT_VIEWS_ONLY=true makes no /watch fetches ---");
+{
+  process.env.YT_VIEWS_ONLY = "true";
+  let videoPageFetches = 0;
+  const restore = installMockFetch((url) => {
+    if (isVideoUrl(url)) {
+      videoPageFetches++;
+      return { status: 500, body: "should never be called in views-only mode" };
+    }
+    return { status: 200, body: CHANNEL_FIXTURE };
+  });
+  try {
+    const snap = await scrapeChannel("UCTESTCHANNEL1234567890", 3);
+    eq(videoPageFetches, 0, "T13: zero /watch fetches happened");
+    eq(snap.mode, "views-only", "T13: mode=views-only");
+    eq(snap.videos.length, 3, "T13: still tracks all 3 videos");
+    eq(snap.videos[0].likeCount, null, "T13: likes are null in views-only mode");
+    eq(snap.videos[0].commentCount, null, "T13: comments are null in views-only mode");
+    ok(snap.videos[0].viewCount !== null, "T13: views are extracted from channel page");
+  } finally {
+    restore();
+    delete process.env.YT_VIEWS_ONLY;
+  }
+}
+
 // --- T8: live network smoke test (best-effort, skipped if rate-limited) ---
 
 console.log("\n--- T8: live channel-page scrape (skipped if rate-limited) ---");

@@ -171,5 +171,61 @@ console.log("\n--- N6: relay 4xx response surfaces a clean error ---");
   }
 }
 
+// --- N7: TELEGRAM_BOT_TOKEN switches to direct Bot API ---
+
+console.log("\n--- N7: direct Bot API mode ---");
+{
+  process.env.NOTIFY_CHAT_ID = "-1001234567890";
+  process.env.TELEGRAM_BOT_TOKEN = "8370042839:FAKE_TOKEN_abc123";
+  delete process.env.NOTIFY_URL;
+  let captured: Captured = {};
+  const restore = installMockFetch((cap) => {
+    captured = cap;
+    return { status: 200, body: '{"ok":true,"result":{"message_id":42}}' };
+  });
+  try {
+    const r = await postToNotificationApi("direct test");
+    eq(r.status, 200, "N7: status=200");
+    eq(
+      captured.url,
+      "https://api.telegram.org/bot8370042839:FAKE_TOKEN_abc123/sendMessage",
+      "N7: hits Telegram Bot API URL with token"
+    );
+    const body = JSON.parse(captured.bodyText ?? "{}");
+    eq(body.chat_id, -1001234567890, "N7: body.chat_id (Telegram field name)");
+    eq(body.text, "direct test", "N7: body.text (Telegram field name)");
+    ok(!("message" in body), "N7: relay-style 'message' field absent in direct mode");
+    ok(!("input_chat_id" in body), "N7: relay-style 'input_chat_id' field absent in direct mode");
+  } finally {
+    restore();
+    delete process.env.TELEGRAM_BOT_TOKEN;
+  }
+}
+
+// --- N8: bot token wins over NOTIFY_URL ---
+
+console.log("\n--- N8: TELEGRAM_BOT_TOKEN takes precedence over NOTIFY_URL ---");
+{
+  process.env.NOTIFY_CHAT_ID = "-99";
+  process.env.TELEGRAM_BOT_TOKEN = "xxx:yyy";
+  process.env.NOTIFY_URL = "https://should-be-ignored.example.com/x";
+  let captured: Captured = {};
+  const restore = installMockFetch((cap) => {
+    captured = cap;
+    return { status: 200, body: '{"ok":true}' };
+  });
+  try {
+    await postToNotificationApi("test");
+    ok(
+      captured.url?.startsWith("https://api.telegram.org/") ?? false,
+      "N8: bot token wins; URL points at Telegram API"
+    );
+  } finally {
+    restore();
+    delete process.env.TELEGRAM_BOT_TOKEN;
+    delete process.env.NOTIFY_URL;
+  }
+}
+
 console.log(`\n--- summary: ${passed} passed, ${failed} failed ---\n`);
 process.exit(failed === 0 ? 0 : 1);

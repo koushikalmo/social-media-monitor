@@ -236,9 +236,9 @@ console.log("\n--- F8: large numbers use thousand-separators ---");
   contains(out, "(+501)", "F8: delta with sign");
 }
 
-// ---------- F9: large baseline truncates to fit telegram's 4096-char cap ----------
+// ---------- F9: large baseline lists every video (no truncation) ----------
 
-console.log("\n--- F9: baseline with 30 videos truncates ---");
+console.log("\n--- F9: baseline with 30 videos lists all of them ---");
 {
   const r = baseReport({
     isFirstRun: true,
@@ -254,13 +254,12 @@ console.log("\n--- F9: baseline with 30 videos truncates ---");
     })),
   });
   const out = formatStatusReport(r);
-  contains(out, "Tracking 30 recent videos", "F9: total count reflects all 30");
+  contains(out, "Tracking 30 recent videos", "F9: header says 30");
   contains(out, "Video 0 ", "F9: video 0 included");
-  contains(out, "Video 14 ", "F9: video 14 (15th) included");
-  notContains(out, "Video 15 ", "F9: video 15 (16th) truncated out");
-  notContains(out, "Video 29 ", "F9: last video truncated out");
-  contains(out, "and 15 more videos", "F9: truncation footer shows remaining count");
-  ok(out.length < 4096, `F9: message fits Telegram limit (length=${out.length})`);
+  contains(out, "Video 14 ", "F9: video 14 included");
+  contains(out, "Video 15 ", "F9: video 15 included (no truncation)");
+  contains(out, "Video 29 ", "F9: last video included");
+  notContains(out, "more videos", "F9: no truncation footer");
 }
 
 // ---------- F10: views-only baseline ----------

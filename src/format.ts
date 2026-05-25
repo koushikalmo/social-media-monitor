@@ -36,10 +36,8 @@ export function formatStatusReport(r: StatusReport): string {
     if (r.allVideos.length > 0) {
       lines.push("");
       lines.push(`Tracking ${r.allVideos.length} recent videos:`);
-      // telegram caps messages at 4096 chars; 15 videos × ~180 char/video fits.
-      const MAX_BASELINE_VIDEOS = 15;
-      const shown = r.allVideos.slice(0, MAX_BASELINE_VIDEOS);
-      for (const v of shown) {
+      // emit every video; notify.ts splits the result across telegram messages
+      for (const v of r.allVideos) {
         lines.push(`• ${v.title}`);
         lines.push(`  https://youtu.be/${v.videoId}`);
         const parts: string[] = [];
@@ -47,10 +45,6 @@ export function formatStatusReport(r: StatusReport): string {
         if (v.likeAfter !== null) parts.push(`likes: ${fmtNum(v.likeAfter)}`);
         if (v.commentAfter !== null) parts.push(`comments: ${fmtNum(v.commentAfter)}`);
         if (parts.length > 0) lines.push(`  ${parts.join(", ")}`);
-      }
-      const remaining = r.allVideos.length - shown.length;
-      if (remaining > 0) {
-        lines.push(`…and ${remaining} more video${remaining === 1 ? "" : "s"} (full list saved; future updates report changes on all ${r.allVideos.length}).`);
       }
     }
     lines.push("");

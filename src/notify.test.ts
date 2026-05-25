@@ -1,6 +1,6 @@
 // notify.ts tests — env handling + body shape with mocked fetch
 
-import { postToNotificationApi } from "./notify.js";
+import { postToNotificationApi, chunkMessage } from "./notify.js";
 
 let passed = 0;
 let failed = 0;
@@ -224,6 +224,69 @@ console.log("\n--- N8: TELEGRAM_BOT_TOKEN takes precedence over NOTIFY_URL ---")
     restore();
     delete process.env.TELEGRAM_BOT_TOKEN;
     delete process.env.NOTIFY_URL;
+  }
+}
+
+// --- N9: short messages aren't chunked ---
+
+console.log("\n--- N9: chunkMessage leaves small messages alone ---");
+{
+  const chunks = chunkMessage("hello\nworld", 100);
+  eq(chunks.length, 1, "N9: single chunk for small message");
+  eq(chunks[0], "hello\nworld", "N9: content preserved");
+}
+
+// --- N10: long messages are split at \n boundaries ---
+
+console.log("\n--- N10: chunkMessage splits at line boundaries ---");
+{
+  const lines = Array.from({ length: 50 }, (_, i) => `line ${i}: ${"x".repeat(80)}`);
+  const big = lines.join("\n");
+  const chunks = chunkMessage(big, 500);
+  ok(chunks.length > 1, `N10: ${chunks.length} chunks produced from ${big.length}-char input`);
+  for (const c of chunks) {
+    ok(c.length <= 500, `N10: chunk size ${c.length} ≤ 500`);
+    // no line is split mid-way
+    for (const line of c.split("\n")) {
+      ok(lines.includes(line), `N10: line "${line.slice(0, 40)}…" is intact`);
+    }
+  }
+  // reassembled content equals original (modulo the \n joins between chunks)
+  const rejoined = chunks.join("\n");
+  eq(rejoined, big, "N10: chunks rejoin to the original message");
+}
+
+// --- N11: long message → multiple POSTs ---
+
+console.log("\n--- N11: large messages produce multiple POST calls ---");
+{
+  process.env.NOTIFY_CHAT_ID = "-5100088425";
+  delete process.env.NOTIFY_URL;
+  delete process.env.TELEGRAM_BOT_TOKEN;
+  let postCount = 0;
+  const lengths: number[] = [];
+  const restore = installMockFetch((_cap) => {
+    postCount++;
+    return { status: 200, body: '{"success":[{}]}' };
+  });
+  // wrap fetch again to capture body lengths
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = (async (input: unknown, init?: { body?: string }) => {
+    if (typeof init?.body === "string") {
+      const parsed = JSON.parse(init.body) as { message?: string };
+      if (parsed.message) lengths.push(parsed.message.length);
+    }
+    return originalFetch(input as RequestInfo, init);
+  }) as typeof globalThis.fetch;
+  try {
+    const longMessage = Array.from({ length: 200 }, (_, i) => `line ${i}: ${"y".repeat(80)}`).join("\n");
+    await postToNotificationApi(longMessage);
+    ok(postCount >= 2, `N11: posted ${postCount} chunks (expected ≥ 2)`);
+    for (const l of lengths) {
+      ok(l <= 4000, `N11: each chunk ≤ 4000 chars (got ${l})`);
+    }
+  } finally {
+    restore();
   }
 }
 

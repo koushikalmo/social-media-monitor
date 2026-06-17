@@ -29,9 +29,32 @@ const workspace =
   );
 
   const message = formatStatusReport(report);
-  console.log(`[cron-runner] formatted message (${message.length} chars)`);
 
-  const result = await postToNotificationApi(message);
+  // bolt the 28-day analytics block onto the report when YT_ANALYTICS=true.
+  // lazy import + try/catch on purpose: it pulls in OAuth and a different api,
+  // and none of that is allowed to take down the core status post — worst case
+  // we log and ship the report without the block.
+  let finalMessage = message;
+  if (process.env.YT_ANALYTICS === "true") {
+    try {
+      const { fetchAnalytics, formatAnalyticsBlock } = await import("./yt-analytics.js");
+      const analytics = await fetchAnalytics();
+      finalMessage = `${message}\n${formatAnalyticsBlock(analytics)}`;
+      console.log(
+        `[cron-runner] analytics: views28d=${analytics.views28d} ` +
+          `watch=${analytics.watchTimeHours}h avgDur=${analytics.avgViewDurationSec}s ` +
+          `subscribedShare=${analytics.subscribedShare ?? "—"}`
+      );
+    } catch (err) {
+      console.error(
+        `[cron-runner] analytics fetch failed (non-fatal):`,
+        err instanceof Error ? err.message : err
+      );
+    }
+  }
+  console.log(`[cron-runner] formatted message (${finalMessage.length} chars)`);
+
+  const result = await postToNotificationApi(finalMessage);
   console.log(
     `[cron-runner] posted: status=${result.status} body="${result.bodySnippet.slice(0, 100)}"`
   );

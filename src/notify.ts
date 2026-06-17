@@ -25,23 +25,77 @@ function chatId(): number {
   return n;
 }
 
-// splits a long message at \n boundaries so each piece fits Telegram's cap.
-// exported for unit tests.
-export function chunkMessage(message: string, maxChars = TELEGRAM_SAFE_CHARS): string[] {
-  if (message.length <= maxChars) return [message];
-  const lines = message.split("\n");
-  const chunks: string[] = [];
-  let current = "";
+// a "block" = one top-level line (no leading space) plus the indented lines that
+// trail it. that's the unit we refuse to split, so a video's "• title" never
+// gets divorced from its url/views lines across a message boundary. relies on
+// format.ts indenting continuation lines — top-level-only text degrades to
+// one-line-per-block, i.e. the old line-wise behaviour.
+function toBlocks(lines: string[]): string[] {
+  const blocks: string[] = [];
+  let current: string[] = [];
   for (const line of lines) {
+    const isContinuation = current.length > 0 && /^\s/.test(line);
+    if (isContinuation) {
+      current.push(line);
+    } else {
+      if (current.length > 0) blocks.push(current.join("\n"));
+      current = [line];
+    }
+  }
+  if (current.length > 0) blocks.push(current.join("\n"));
+  return blocks;
+}
+
+// escape hatch for the pathological case: a single block bigger than the cap.
+// prefer line boundaries; only ever hard-slice a line that's itself > maxChars
+// (real video entries never are, so in practice this just splits on newlines).
+function splitOversized(text: string, maxChars: number): string[] {
+  const out: string[] = [];
+  let current = "";
+  for (const line of text.split("\n")) {
     const candidate = current.length === 0 ? line : current + "\n" + line;
     if (candidate.length > maxChars) {
       if (current.length > 0) {
-        chunks.push(current);
-        current = line.length > maxChars ? line.slice(0, maxChars) : line;
-      } else {
-        chunks.push(line.slice(0, maxChars));
+        out.push(current);
         current = "";
       }
+      let rest = line;
+      while (rest.length > maxChars) {
+        out.push(rest.slice(0, maxChars));
+        rest = rest.slice(maxChars);
+      }
+      current = rest;
+    } else {
+      current = candidate;
+    }
+  }
+  if (current.length > 0) out.push(current);
+  return out;
+}
+
+// greedily pack blocks into <=maxChars pieces so each fits Telegram's cap while
+// keeping entries whole. exported for tests. invariant: chunks.join("\n") ===
+// message, as long as no single line exceeds maxChars (titles never do).
+export function chunkMessage(message: string, maxChars = TELEGRAM_SAFE_CHARS): string[] {
+  if (message.length <= maxChars) return [message];
+  const chunks: string[] = [];
+  let current = "";
+  for (const block of toBlocks(message.split("\n"))) {
+    if (block.length > maxChars) {
+      // block can't fit alone: flush what we have, then hard-split it.
+      if (current.length > 0) {
+        chunks.push(current);
+        current = "";
+      }
+      const parts = splitOversized(block, maxChars);
+      for (let i = 0; i < parts.length - 1; i++) chunks.push(parts[i]);
+      current = parts[parts.length - 1];
+      continue;
+    }
+    const candidate = current.length === 0 ? block : current + "\n" + block;
+    if (candidate.length > maxChars) {
+      if (current.length > 0) chunks.push(current);
+      current = block;
     } else {
       current = candidate;
     }

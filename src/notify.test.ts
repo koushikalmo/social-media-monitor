@@ -290,5 +290,38 @@ console.log("\n--- N11: large messages produce multiple POST calls ---");
   }
 }
 
+// --- N12: video entries (title + indented lines) stay whole across chunks ---
+
+console.log("\n--- N12: chunkMessage keeps multi-line entries intact ---");
+{
+  // 40 entries of "• title" + two indented continuation lines.
+  const entries = Array.from({ length: 40 }, (_, i) =>
+    `• Video number ${i} with a reasonably long descriptive title here\n  https://youtu.be/vid${i}\n  views: ${i * 111}`
+  );
+  const msg = `📺 Channel — initial baseline\n\nTracking 40 recent videos:\n${entries.join("\n")}`;
+  const chunks = chunkMessage(msg, 500);
+  ok(chunks.length > 1, `N12: ${chunks.length} chunks produced`);
+  for (const c of chunks) {
+    ok(c.length <= 500, `N12: chunk ${c.length} ≤ 500`);
+    // no chunk may start with an indented continuation line — that would mean
+    // an entry's "• title" was orphaned in the previous chunk.
+    eq(/^\s/.test(c), false, "N12: chunk does not begin mid-entry");
+  }
+  // every "• title" line keeps its two continuation lines in the same chunk.
+  for (const c of chunks) {
+    const lines = c.split("\n");
+    for (let i = 0; i < lines.length; i++) {
+      if (lines[i].startsWith("• Video number")) {
+        ok(
+          (lines[i + 1] ?? "").trim().startsWith("https://") &&
+            (lines[i + 2] ?? "").trim().startsWith("views:"),
+          `N12: entry "${lines[i].slice(0, 24)}…" kept with its url + views`
+        );
+      }
+    }
+  }
+  eq(chunks.join("\n"), msg, "N12: chunks rejoin to the original message");
+}
+
 console.log(`\n--- summary: ${passed} passed, ${failed} failed ---\n`);
 process.exit(failed === 0 ? 0 : 1);

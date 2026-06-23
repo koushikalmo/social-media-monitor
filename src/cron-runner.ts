@@ -30,10 +30,9 @@ const workspace =
 
   const message = formatStatusReport(report);
 
-  // bolt the 28-day analytics block onto the report when YT_ANALYTICS=true.
-  // lazy import + try/catch on purpose: it pulls in OAuth and a different api,
-  // and none of that is allowed to take down the core status post — worst case
-  // we log and ship the report without the block.
+  // tack the analytics block onto the report when YT_ANALYTICS=true. lazy import
+  // + try/catch on purpose: it drags in OAuth and a second api, and none of that
+  // gets to take down the core post — worst case we log and ship without the block.
   let finalMessage = message;
   if (process.env.YT_ANALYTICS === "true") {
     try {
@@ -41,7 +40,7 @@ const workspace =
       const analytics = await fetchAnalytics();
       finalMessage = `${message}\n${formatAnalyticsBlock(analytics)}`;
       console.log(
-        `[cron-runner] analytics: views28d=${analytics.views28d} ` +
+        `[cron-runner] analytics: views=${analytics.views} ` +
           `watch=${analytics.watchTimeHours}h avgDur=${analytics.avgViewDurationSec}s ` +
           `subscribedShare=${analytics.subscribedShare ?? "—"}`
       );

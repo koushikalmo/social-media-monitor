@@ -1,6 +1,6 @@
 // yt-analytics.ts tests — window math, OAuth env handling, report parsing
 // (with a mocked fetch), previous-period comparison, and the formatted block.
-// No real network.
+// No real network. window is WINDOW_DAYS=7, so dates/labels below reflect 7d.
 
 import {
   analyticsWindow,
@@ -111,17 +111,17 @@ function happyResponderFactory() {
   };
 }
 
-// --- A1: analyticsWindow / previousWindow math ---
+// --- A1: analyticsWindow / previousWindow math (7-day window) ---
 
 console.log("\n--- A1: window math ---");
 {
   const now = new Date("2026-06-18T00:00:00Z");
   const w = analyticsWindow(now);
   eq(w.endDate, "2026-06-16", "A1: current endDate = now - 2 days");
-  eq(w.startDate, "2026-05-20", "A1: current startDate = endDate - 27 days");
+  eq(w.startDate, "2026-06-10", "A1: current startDate = endDate - 6 days (7d inclusive)");
   const p = previousWindow(now);
-  eq(p.endDate, "2026-05-19", "A1: previous endDate = current start - 1 day");
-  eq(p.startDate, "2026-04-22", "A1: previous startDate = prev end - 27 days");
+  eq(p.endDate, "2026-06-09", "A1: previous endDate = current start - 1 day");
+  eq(p.startDate, "2026-06-03", "A1: previous startDate = prev end - 6 days");
 }
 
 // --- A2: missing OAuth env throws a clear error ---
@@ -158,13 +158,13 @@ console.log("\n--- A3: happy path parsing ---");
     delete process.env.YT_DATA_API_KEY;
     delete process.env.YT_CHANNEL;
   }
-  eq(a!.views28d, 124500, "A3: views28d (current)");
+  eq(a!.views, 124500, "A3: views (current)");
   eq(a!.watchTimeHours, 3210, "A3: watch hours = round(192600/60)");
-  eq(a!.subscribersNet28d, 320, "A3: net subs = gained 400 - lost 80");
+  eq(a!.subscribersNet, 320, "A3: net subs = gained 400 - lost 80");
   eq(a!.avgViewDurationSec, 252, "A3: avg view duration seconds");
-  eq(a!.prevViews28d, 105000, "A3: prev views (previous window)");
+  eq(a!.prevViews, 105000, "A3: prev views (previous window)");
   eq(a!.prevWatchTimeHours, 2850, "A3: prev watch hours = round(171000/60)");
-  eq(a!.prevSubscribersNet28d, 250, "A3: prev net subs = 350 - 100");
+  eq(a!.prevSubscribersNet, 250, "A3: prev net subs = 350 - 100");
   ok(Math.abs((a!.subscribedShare ?? 0) - 47000 / 124500) < 1e-9, "A3: subscribedShare ratio");
   eq(a!.topAgeGroups[0], "age25-34 (41%)", "A3: highest age group first");
   eq(a!.lifetimeViews, 2340118, "A3: lifetime views from Data API");
@@ -215,9 +215,9 @@ console.log("\n--- A5: optional calls degrade gracefully ---");
   } finally {
     restore();
   }
-  eq(a!.views28d, 100, "A5: core still parsed");
+  eq(a!.views, 100, "A5: core still parsed");
   eq(a!.watchTimeHours, 100, "A5: watch hours from core");
-  eq(a!.subscribersNet28d, 9, "A5: net subs 10 - 1");
+  eq(a!.subscribersNet, 9, "A5: net subs 10 - 1");
   eq(a!.subscribedShare, null, "A5: subscribedShare null when call fails");
   eq(a!.topAgeGroups.length, 0, "A5: topAgeGroups empty when call fails");
   eq(a!.lifetimeViews, null, "A5: lifetimeViews null when no Data API key");
@@ -264,10 +264,10 @@ console.log("\n--- A7: empty rows tolerated ---");
   } finally {
     restore();
   }
-  eq(a!.views28d, 0, "A7: views28d defaults to 0");
+  eq(a!.views, 0, "A7: views defaults to 0");
   eq(a!.watchTimeHours, 0, "A7: watch hours defaults to 0");
-  eq(a!.subscribersNet28d, 0, "A7: net subs defaults to 0");
-  eq(a!.prevViews28d, 0, "A7: prev views defaults to 0");
+  eq(a!.subscribersNet, 0, "A7: net subs defaults to 0");
+  eq(a!.prevViews, 0, "A7: prev views defaults to 0");
 }
 
 // --- A8: formatAnalyticsBlock renders the full block with comparisons ---
@@ -275,23 +275,23 @@ console.log("\n--- A7: empty rows tolerated ---");
 console.log("\n--- A8: formatAnalyticsBlock full ---");
 {
   const block = formatAnalyticsBlock({
-    startDate: "2026-05-20",
+    startDate: "2026-06-10",
     endDate: "2026-06-16",
-    views28d: 120000,
+    views: 120000,
     watchTimeHours: 3300,
-    subscribersNet28d: 320,
+    subscribersNet: 320,
     avgViewDurationSec: 252,
-    prevViews28d: 100000, // +20%
+    prevViews: 100000, // +20%
     prevWatchTimeHours: 3000, // +10%
-    prevSubscribersNet28d: 400, // -20%
+    prevSubscribersNet: 400, // -20%
     subscribedShare: 47000 / 124500,
     topAgeGroups: ["age25-34 (41%)", "age18-24 (22%)"],
     lifetimeViews: 2340118,
   });
-  ok(block.includes("📊 Last 28 days (2026-05-20 → 2026-06-16)"), "A8: header with window");
-  ok(block.includes("Views: 120,000  (↑ 20% vs prev 28d)"), "A8: views + comparison");
-  ok(block.includes("Watch time: 3,300 hrs  (↑ 10% vs prev 28d)"), "A8: watch time + comparison");
-  ok(block.includes("Subscribers: +320  (↓ 20% vs prev 28d)"), "A8: net subs + comparison");
+  ok(block.includes("📊 Last 7 days (2026-06-10 → 2026-06-16)"), "A8: header with window");
+  ok(block.includes("Views: 120,000  (↑ 20% vs prev 7d)"), "A8: views + comparison");
+  ok(block.includes("Watch time: 3,300 hrs  (↑ 10% vs prev 7d)"), "A8: watch time + comparison");
+  ok(block.includes("Subscribers: +320  (↓ 20% vs prev 7d)"), "A8: net subs + comparison");
   ok(block.includes("Avg view duration: 4:12"), "A8: duration mm:ss");
   ok(block.includes("Audience: 38% subscribed"), "A8: subscribed pct rounded");
   ok(block.includes("Top age groups: age25-34 (41%), age18-24 (22%)"), "A8: age groups");
@@ -304,20 +304,20 @@ console.log("\n--- A8: formatAnalyticsBlock full ---");
 console.log("\n--- A9: formatAnalyticsBlock minimal ---");
 {
   const block = formatAnalyticsBlock({
-    startDate: "2026-05-20",
+    startDate: "2026-06-10",
     endDate: "2026-06-16",
-    views28d: 0,
+    views: 0,
     watchTimeHours: 0,
-    subscribersNet28d: 0,
+    subscribersNet: 0,
     avgViewDurationSec: 5,
-    prevViews28d: 0,
+    prevViews: 0,
     prevWatchTimeHours: 0,
-    prevSubscribersNet28d: 0,
+    prevSubscribersNet: 0,
     subscribedShare: null,
     topAgeGroups: [],
     lifetimeViews: null,
   });
-  ok(!block.includes("vs prev 28d"), "A9: no comparison when prev baseline is 0");
+  ok(!block.includes("vs prev 7d"), "A9: no comparison when prev baseline is 0");
   ok(block.includes("Subscribers: +0"), "A9: zero net subs shown as +0");
   ok(!block.includes("Audience:"), "A9: no audience line when share null");
   ok(!block.includes("Top age groups:"), "A9: no age line when empty");

@@ -1,48 +1,54 @@
-// tldr: pull the Studio "Overview" numbers (views / watch time / net subs, each
-// vs the prior 28d) + audience split + lifetime views, and render a text block
-// for the digest. read-only, opt-in (YT_ANALYTICS=true), never blocks the report.
+// channel-level analytics for the digest: the same headline numbers studio shows
+// on its overview card — views, watch time, net subs — each against the prior
+// window, plus the audience split and lifetime views. opt-in (YT_ANALYTICS=true),
+// read-only, and wrapped so a bad run drops the block instead of killing the post.
 //
-// auth: the Analytics API needs OAuth as an owner/manager — an API key won't do.
-//   YT_OAUTH_CLIENT_ID / _SECRET / _REFRESH_TOKEN  (refresh-token grant each run)
-// lifetime views piggybacks on the Data API: YT_DATA_API_KEY + YT_CHANNEL (UC…).
-// the "vs prev 28d" delta is our stand-in for Studio's "typical performance"
-// band — that band is modelled server-side and never shipped over the API.
-// impressions/CTR are the same story (Studio-only), so deliberately not here.
+// window length is WINDOW_DAYS. the api has no "7d"/"28d" preset — you just hand
+// it a date range — so the window is ours to pick and the labels follow it.
+//
+// needs OAuth as an owner/manager (an api key can't read analytics):
+//   YT_OAUTH_CLIENT_ID / _SECRET / _REFRESH_TOKEN  (refresh-token grant per run)
+// lifetime views is the one number that comes off the Data API instead:
+//   YT_DATA_API_KEY + YT_CHANNEL (a UC… id).
+// the "vs prev" delta stands in for studio's "typical performance" band, which is
+// computed server-side and never exposed. impressions/CTR likewise — studio only.
 
 const TOKEN_URL = "https://oauth2.googleapis.com/token";
 const REPORTS_URL = "https://youtubeanalytics.googleapis.com/v2/reports";
 const DATA_CHANNELS_URL = "https://www.googleapis.com/youtube/v3/channels";
 const HTTP_TIMEOUT_MS = 15_000;
-// analytics finalises on a ~2-day lag; end the window at the cutoff so the tail
-// isn't a half-counted day quietly dragging the totals down.
+// analytics lands ~2 days late, so stop the window there — otherwise the last day
+// is half-counted and quietly drags every total down.
 const ANALYTICS_LAG_DAYS = 2;
-const WINDOW_DAYS = 28;
+// reporting window. change this one number and the metrics, the comparison, and
+// the rendered labels all move with it.
+const WINDOW_DAYS = 7;
 
 export type ChannelAnalytics = {
   startDate: string;
   endDate: string;
   // current window
-  views28d: number;
+  views: number;
   watchTimeHours: number;
-  subscribersNet28d: number; // gained - lost
+  subscribersNet: number; // gained - lost
   avgViewDurationSec: number;
-  // prior window — the comparison baseline; left 0 when it's unavailable
-  prevViews28d: number;
+  // prior window — the baseline we compare against; left 0 when it's unavailable
+  prevViews: number;
   prevWatchTimeHours: number;
-  prevSubscribersNet28d: number;
+  prevSubscribersNet: number;
   // audience
   subscribedShare: number | null; // 0..1 of views from subscribers
   topAgeGroups: string[]; // e.g. ["age25-34 (41%)", "age18-24 (22%)"]
   lifetimeViews: number | null; // Data API; null when unavailable
 };
 
-// the api wants bare UTC YYYY-MM-DD, not ISO timestamps.
+// the api wants a bare UTC date, not a full ISO timestamp.
 function ymd(d: Date): string {
   return d.toISOString().slice(0, 10);
 }
 
-// current reporting window: 28 inclusive days ending at the lag cutoff.
-// exported so the date math can be pinned against a fixed clock in tests.
+// the window we report on: WINDOW_DAYS up to the lag cutoff. exported so tests can
+// pin it against a fixed clock.
 export function analyticsWindow(now = new Date()): { startDate: string; endDate: string } {
   const end = new Date(now);
   end.setUTCDate(end.getUTCDate() - ANALYTICS_LAG_DAYS);
@@ -51,7 +57,7 @@ export function analyticsWindow(now = new Date()): { startDate: string; endDate:
   return { startDate: ymd(start), endDate: ymd(end) };
 }
 
-// the 28 days immediately before analyticsWindow() — i.e. the "vs prev" baseline.
+// the window immediately before that one — what the "vs prev" delta measures against.
 export function previousWindow(now = new Date()): { startDate: string; endDate: string } {
   const cur = analyticsWindow(now);
   const prevEnd = new Date(`${cur.startDate}T00:00:00Z`);
@@ -61,8 +67,8 @@ export function previousWindow(now = new Date()): { startDate: string; endDate: 
   return { startDate: ymd(prevStart), endDate: ymd(prevEnd) };
 }
 
-// fail loud and specific on a missing secret — an empty string just buys you an
-// opaque google 400 three calls later.
+// blow up early and by name — a blank secret only turns into a vague google 400
+// a few calls later, which is miserable to debug.
 function requireEnv(name: string): string {
   const v = process.env[name];
   if (!v || !v.trim()) {
@@ -74,8 +80,8 @@ function requireEnv(name: string): string {
   return v.trim();
 }
 
-// refresh-token -> short-lived access token. fatal by design: every report call
-// below needs it, so there's nothing useful to do if this fails.
+// trade the refresh token for an access token. nothing downstream works without
+// it, so a failure here is fatal on purpose.
 async function getAccessToken(): Promise<string> {
   const body = new URLSearchParams({
     client_id: requireEnv("YT_OAUTH_CLIENT_ID"),
@@ -94,7 +100,7 @@ async function getAccessToken(): Promise<string> {
   try {
     json = text ? JSON.parse(text) : {};
   } catch {
-    // non-json body -> no token; the raw text is surfaced in the error below.
+    // not json → no token; the raw body still rides along in the error below.
   }
   if (!res.ok || !json.access_token) {
     throw new Error(
@@ -106,8 +112,8 @@ async function getAccessToken(): Promise<string> {
 
 type QueryResult = { cols: string[]; rows: any[][] };
 
-// thin reports.query wrapper: hands back column names + raw rows and lets the
-// caller index by metric name, since the api doesn't promise column order.
+// one reports.query call. hands back column names + rows so callers can look a
+// value up by name — the api doesn't promise column order.
 async function query(token: string, params: Record<string, string>): Promise<QueryResult> {
   const url = `${REPORTS_URL}?${new URLSearchParams(params).toString()}`;
   const res = await fetch(url, {
@@ -136,8 +142,8 @@ type CoreMetrics = {
   subsNet: number;
 };
 
-// headline metrics for one window. no dimensions => a single summary row; index
-// by header name (see query) rather than trusting positional order.
+// the headline numbers for one window. no dimensions means a single summary row;
+// pull each metric out by its column name.
 async function coreFor(token: string, startDate: string, endDate: string): Promise<CoreMetrics> {
   const q = await query(token, {
     ids: "channel==MINE",
@@ -158,8 +164,8 @@ async function coreFor(token: string, startDate: string, endDate: string): Promi
   };
 }
 
-// lifetime channel views off the Data API. optional + swallow-all: no key, a
-// non-UC channel, or any error just drops the line — it never throws.
+// lifetime views off the Data API. completely optional — no key, a non-UC channel,
+// or any error just drops the line, it never throws.
 async function fetchLifetimeViews(): Promise<number | null> {
   const key = process.env.YT_DATA_API_KEY?.trim();
   const ch = process.env.YT_CHANNEL?.trim();
@@ -176,28 +182,28 @@ async function fetchLifetimeViews(): Promise<number | null> {
   }
 }
 
-// run order: token, then current + prior core, then the optional extras. only
-// the current-window call is load-bearing; every optional bit that fails simply
-// omits its own line instead of sinking the whole block.
+// token first, then the current and prior windows, then the nice-to-haves. the
+// current window is the only thing we can't do without — everything else is
+// best-effort and just drops its own line if it fails.
 export async function fetchAnalytics(): Promise<ChannelAnalytics> {
   const token = await getAccessToken();
   const w = analyticsWindow();
   const pw = previousWindow();
 
-  // current window — the one call we let throw.
+  // the must-have.
   const cur = await coreFor(token, w.startDate, w.endDate);
 
-  // prior window — feeds the delta; zeros (=> no delta rendered) if it errors.
+  // only feeds the delta; if it fails we just won't render one.
   let prev: CoreMetrics = { views: 0, minutes: 0, avgDur: 0, subsNet: 0 };
   try {
     prev = await coreFor(token, pw.startDate, pw.endDate);
   } catch {
-    // swallow: comparison just disappears, current totals still post.
+    // leave it zeroed; comparisonLine drops the delta when prev is 0.
   }
 
   const dateRange = { startDate: w.startDate, endDate: w.endDate, ids: "channel==MINE" };
 
-  // audience #1: share of views coming from subscribers.
+  // how much of the audience was already subscribed.
   let subscribedShare: number | null = null;
   try {
     const sub = await query(token, { ...dateRange, dimensions: "subscribedStatus", metrics: "views" });
@@ -213,7 +219,7 @@ export async function fetchAnalytics(): Promise<ChannelAnalytics> {
     // optional
   }
 
-  // audience #2: top-3 age buckets by viewer %.
+  // the top few age buckets, biggest first.
   let topAgeGroups: string[] = [];
   try {
     const demo = await query(token, { ...dateRange, dimensions: "ageGroup", metrics: "viewerPercentage" });
@@ -226,50 +232,49 @@ export async function fetchAnalytics(): Promise<ChannelAnalytics> {
     // optional
   }
 
-  // lifetime total (Data API, optional).
   const lifetimeViews = await fetchLifetimeViews();
 
   return {
     startDate: w.startDate,
     endDate: w.endDate,
-    views28d: cur.views,
+    views: cur.views,
     watchTimeHours: Math.round(cur.minutes / 60),
-    subscribersNet28d: cur.subsNet,
+    subscribersNet: cur.subsNet,
     avgViewDurationSec: cur.avgDur,
-    prevViews28d: prev.views,
+    prevViews: prev.views,
     prevWatchTimeHours: Math.round(prev.minutes / 60),
-    prevSubscribersNet28d: prev.subsNet,
+    prevSubscribersNet: prev.subsNet,
     subscribedShare,
     topAgeGroups,
     lifetimeViews,
   };
 }
 
-// "Label: value  (↑/↓ N% vs prev 28d)". prev<=0 means no usable baseline (new
-// channel, or the prior-window call failed) -> drop the delta, keep the value.
+// "Label: value  (↑/↓ N% vs prev Nd)". with no baseline (prev 0 — new channel, or
+// the prior-window call failed) there's no honest delta, so we just show the value.
 function comparisonLine(label: string, value: string, curr: number, prev: number): string {
   if (prev <= 0) return `${label}: ${value}`;
   const pct = ((curr - prev) / prev) * 100;
   const arrow = pct > 0 ? "↑" : pct < 0 ? "↓" : "→";
-  return `${label}: ${value}  (${arrow} ${Math.abs(pct).toFixed(0)}% vs prev 28d)`;
+  return `${label}: ${value}  (${arrow} ${Math.abs(pct).toFixed(0)}% vs prev ${WINDOW_DAYS}d)`;
 }
 
-// net subs can be negative; always emit the sign so +0 / -12 read unambiguously.
+// net subs can go negative, so always show the sign.
 function fmtSigned(n: number): string {
   return n >= 0 ? `+${n.toLocaleString()}` : n.toLocaleString();
 }
 
-// build the text block. optional lines (audience / age / lifetime) only appear
-// when their data actually arrived, so a degraded run still reads intentionally.
+// stitch the block together. the optional lines only appear when their data
+// actually arrived, so a half-failed run still reads as deliberate, not broken.
 export function formatAnalyticsBlock(a: ChannelAnalytics): string {
   const mm = Math.floor(a.avgViewDurationSec / 60);
   const ss = String(Math.round(a.avgViewDurationSec % 60)).padStart(2, "0");
   const lines: string[] = [
     "",
-    `📊 Last 28 days (${a.startDate} → ${a.endDate})`,
-    comparisonLine("Views", a.views28d.toLocaleString(), a.views28d, a.prevViews28d),
+    `📊 Last ${WINDOW_DAYS} days (${a.startDate} → ${a.endDate})`,
+    comparisonLine("Views", a.views.toLocaleString(), a.views, a.prevViews),
     comparisonLine("Watch time", `${a.watchTimeHours.toLocaleString()} hrs`, a.watchTimeHours, a.prevWatchTimeHours),
-    comparisonLine("Subscribers", fmtSigned(a.subscribersNet28d), a.subscribersNet28d, a.prevSubscribersNet28d),
+    comparisonLine("Subscribers", fmtSigned(a.subscribersNet), a.subscribersNet, a.prevSubscribersNet),
     `Avg view duration: ${mm}:${ss}`,
   ];
   if (a.subscribedShare !== null) {
@@ -281,8 +286,8 @@ export function formatAnalyticsBlock(a: ChannelAnalytics): string {
   if (a.lifetimeViews !== null) {
     lines.push(`Total channel views: ${a.lifetimeViews.toLocaleString()}`);
   }
-  // impressions/CTR are Studio-only; line kept (commented) so flipping the
-  // "see Studio" pointer back on is a one-liner if we ever want it.
+  // impressions/CTR are studio-only; the line stays here, commented, so turning the
+  // "see studio" pointer back on is a one-liner.
   // lines.push("_impressions: see YouTube Studio (no API)_");
   return lines.join("\n");
 }

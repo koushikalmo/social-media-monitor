@@ -25,11 +25,10 @@ function chatId(): number {
   return n;
 }
 
-// a "block" = one top-level line (no leading space) plus the indented lines that
-// trail it. that's the unit we refuse to split, so a video's "• title" never
-// gets divorced from its url/views lines across a message boundary. relies on
-// format.ts indenting continuation lines — top-level-only text degrades to
-// one-line-per-block, i.e. the old line-wise behaviour.
+// a "block" is one top-level line plus the indented lines hanging off it. that's
+// the unit we won't split, so a video's "• title" can't get torn from its url and
+// views across a message boundary. text with no indentation just becomes one block
+// per line — i.e. the old line-wise behaviour, unchanged.
 function toBlocks(lines: string[]): string[] {
   const blocks: string[] = [];
   let current: string[] = [];
@@ -46,9 +45,9 @@ function toBlocks(lines: string[]): string[] {
   return blocks;
 }
 
-// escape hatch for the pathological case: a single block bigger than the cap.
-// prefer line boundaries; only ever hard-slice a line that's itself > maxChars
-// (real video entries never are, so in practice this just splits on newlines).
+// fallback for the rare block that's bigger than the cap on its own: break it on
+// newlines, and only ever cut mid-line if a single line somehow exceeds maxChars
+// (real entries never do, so in practice this is just a newline split).
 function splitOversized(text: string, maxChars: number): string[] {
   const out: string[] = [];
   let current = "";
@@ -73,16 +72,16 @@ function splitOversized(text: string, maxChars: number): string[] {
   return out;
 }
 
-// greedily pack blocks into <=maxChars pieces so each fits Telegram's cap while
-// keeping entries whole. exported for tests. invariant: chunks.join("\n") ===
-// message, as long as no single line exceeds maxChars (titles never do).
+// pack blocks into <=maxChars pieces, keeping entries whole. exported for tests.
+// invariant: chunks.join("\n") rebuilds the original message, as long as no single
+// line is longer than maxChars (titles aren't).
 export function chunkMessage(message: string, maxChars = TELEGRAM_SAFE_CHARS): string[] {
   if (message.length <= maxChars) return [message];
   const chunks: string[] = [];
   let current = "";
   for (const block of toBlocks(message.split("\n"))) {
     if (block.length > maxChars) {
-      // block can't fit alone: flush what we have, then hard-split it.
+      // doesn't fit on its own: flush what we have, then hard-split it.
       if (current.length > 0) {
         chunks.push(current);
         current = "";

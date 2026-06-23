@@ -142,11 +142,21 @@ type CoreMetrics = {
   subsNet: number;
 };
 
+// which channel to pull. prefer the explicit id in YT_CHANNEL — channel==MINE
+// resolves to whatever channel the authorized account personally owns, which for
+// a Brand-Account manager is the wrong (or an empty) channel and comes back 403.
+// an explicit channel id reads the org's channel directly. falls back to MINE
+// when YT_CHANNEL isn't a UC… id.
+export function analyticsIds(): string {
+  const ch = process.env.YT_CHANNEL?.trim();
+  return ch && ch.startsWith("UC") ? `channel==${ch}` : "channel==MINE";
+}
+
 // the headline numbers for one window. no dimensions means a single summary row;
 // pull each metric out by its column name.
 async function coreFor(token: string, startDate: string, endDate: string): Promise<CoreMetrics> {
   const q = await query(token, {
-    ids: "channel==MINE",
+    ids: analyticsIds(),
     startDate,
     endDate,
     metrics: "views,estimatedMinutesWatched,averageViewDuration,subscribersGained,subscribersLost",
@@ -201,7 +211,7 @@ export async function fetchAnalytics(): Promise<ChannelAnalytics> {
     // leave it zeroed; comparisonLine drops the delta when prev is 0.
   }
 
-  const dateRange = { startDate: w.startDate, endDate: w.endDate, ids: "channel==MINE" };
+  const dateRange = { startDate: w.startDate, endDate: w.endDate, ids: analyticsIds() };
 
   // how much of the audience was already subscribed.
   let subscribedShare: number | null = null;

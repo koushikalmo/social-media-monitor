@@ -5,6 +5,7 @@
 import {
   analyticsWindow,
   previousWindow,
+  analyticsIds,
   fetchAnalytics,
   formatAnalyticsBlock,
   type ChannelAnalytics,
@@ -323,6 +324,21 @@ console.log("\n--- A9: formatAnalyticsBlock minimal ---");
   ok(!block.includes("Top age groups:"), "A9: no age line when empty");
   ok(!block.includes("Total channel views:"), "A9: no lifetime line when null");
   ok(block.includes("Avg view duration: 0:05"), "A9: zero-padded seconds");
+}
+
+// --- A10: analyticsIds prefers an explicit UC channel id over channel==MINE ---
+
+console.log("\n--- A10: analyticsIds selector ---");
+{
+  const saved = process.env.YT_CHANNEL;
+  process.env.YT_CHANNEL = "UCA_NxRFfbYSG3kOeHak0BjQ";
+  eq(analyticsIds(), "channel==UCA_NxRFfbYSG3kOeHak0BjQ", "A10: explicit id when YT_CHANNEL is a UC id");
+  process.env.YT_CHANNEL = "@somehandle";
+  eq(analyticsIds(), "channel==MINE", "A10: falls back to MINE for a non-UC value");
+  delete process.env.YT_CHANNEL;
+  eq(analyticsIds(), "channel==MINE", "A10: falls back to MINE when unset");
+  if (saved === undefined) delete process.env.YT_CHANNEL;
+  else process.env.YT_CHANNEL = saved;
 }
 
 console.log(`\n--- summary: ${passed} passed, ${failed} failed ---`);
